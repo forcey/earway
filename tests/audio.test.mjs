@@ -1,0 +1,9 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {generate,SKILLS} from '../app/engine.ts';
+import {playEvents,stopAudio,targetEvents,comparison} from '../app/audio.ts';
+const oscillators=[];const gains=[];
+class Param{value=0;steps=[];setValueAtTime(...x){this.steps.push(x)}linearRampToValueAtTime(...x){this.steps.push(x)}exponentialRampToValueAtTime(...x){this.steps.push(x)}}
+class Context{currentTime=10;destination={};createDynamicsCompressor(){return {threshold:{},ratio:{},connect(){}}}async resume(){}createOscillator(){const n={frequency:{},connect(){},start(t){this.startAt=t},stop(t){this.stopAt=t}};oscillators.push(n);return n}createGain(){const n={gain:new Param(),connect(){}};gains.push(n);return n}}
+globalThis.window={AudioContext:Context};
+test('audio schedules correct pitch, envelope and tempo without changing frequency',async()=>{const q=generate('pitch',1,()=>0);await playEvents(q.events,'piano',.7,.8);assert.equal(oscillators.length,5);assert(Math.abs(oscillators[0].frequency.value-261.625565)<.001);assert.equal(oscillators[0].startAt,10.06);assert(oscillators.every(o=>o.stopAt>o.startAt));assert(gains.every(g=>g.gain.steps.every(([v,t])=>Number.isFinite(v)&&Number.isFinite(t)&&v>=0&&v<1)));stopAudio()});
+test('target replay removes context; every wrong-choice comparison actually plays that answer',()=>{for(const skill of SKILLS){const q=generate(skill.id,5,()=>.1);const target=targetEvents(q);assert.equal(target[0].time,0);assert(target.every(e=>e.target));for(const choice of q.choices){const audio=comparison(q,choice);assert(audio.length>0);assert(audio.every(e=>e.notes.every(n=>Number.isFinite(n))));if(choice!==q.answer&&q.skill==='chords')assert.notDeepEqual(audio[0].notes,target[0].notes)}}const chord=generate('chords',1,()=>0);const arp=targetEvents(chord,true);assert.equal(arp.length,4);assert.equal(arp[0].notes.length,1);assert.equal(arp.at(-1).notes.length,3)});

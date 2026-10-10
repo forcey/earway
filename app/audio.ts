@@ -1,0 +1,19 @@
+import type { NoteEvent, Question } from './engine';
+let context:AudioContext|null=null;
+let nodes:OscillatorNode[]=[];
+let limiter:DynamicsCompressorNode|null=null;
+export function stopAudio(){nodes.forEach(n=>{try{n.stop()}catch{}});nodes=[]}
+async function ready(){if(!context){const Constructor=window.AudioContext||(window as unknown as {webkitAudioContext:typeof AudioContext}).webkitAudioContext;context=new Constructor();limiter=context.createDynamicsCompressor();limiter.threshold.value=-12;limiter.ratio.value=5;limiter.connect(context.destination)}await context.resume();return context}
+export async function playEvents(events:NoteEvent[],tone:string,volume:number,speed=1){const ctx=await ready();stopAudio();const base=ctx.currentTime+.06;for(const e of events){for(const midi of e.notes){const freq=440*2**((midi-69)/12);const partials=tone==='pure'?[1]:tone==='warm'?[1,.32,.12,.04]:[1,.48,.22,.09,.035];partials.forEach((strength,i)=>{const osc=ctx.createOscillator();const gain=ctx.createGain();const t=base+e.time/speed;const duration=e.duration/speed;osc.type='sine';osc.frequency.value=freq*(i+1);const amp=volume*e.velocity*strength*.24/Math.sqrt(e.notes.length);gain.gain.setValueAtTime(0,t);gain.gain.linearRampToValueAtTime(amp,t+.012);gain.gain.exponentialRampToValueAtTime(Math.max(.0001,amp*.25),t+Math.max(.03,duration*.7));gain.gain.exponentialRampToValueAtTime(.0001,t+duration+.14);osc.connect(gain);gain.connect(limiter!);osc.start(t);osc.stop(t+duration+.16);nodes.push(osc)})}}return Math.max(...events.map(e=>e.time+e.duration))/speed+.25}
+export function targetEvents(q:Question,arpeggio=false){const target=q.events.filter(e=>e.target);if(arpeggio&&target[0]?.notes.length>1){const notes=[...target[0].notes].sort((a,b)=>a-b);return [...notes.map((n,i)=>({notes:[n],time:i*.4,duration:.35,velocity:.65})),{notes,time:notes.length*.4+.2,duration:1,velocity:.55}]}return target.map(e=>({...e,time:e.time-q.targetStart}))}
+export function comparison(q:Question,label:string):NoteEvent[]{
+ if(q.skill==='pitch'||q.skill==='pitch-context'){const names=['C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B'];return [{notes:[60+names.indexOf(label)],time:0,duration:.8,velocity:.65}]}
+ if(q.skill==='intervals'||q.skill==='interval-context'){const names=['Unison','Minor 2nd','Major 2nd','Minor 3rd','Major 3rd','Perfect 4th','Tritone','Perfect 5th','Minor 6th','Major 6th','Minor 7th','Major 7th','Octave'];const target=q.events.filter(e=>e.target);const first=target[0].notes[0];const second=target.length>1?target[1].notes[0]:target[0].notes[1];const sign=second<first?-1:1;return [{notes:[first],time:0,duration:.4,velocity:.65},{notes:[first+sign*names.indexOf(label)],time:.6,duration:.8,velocity:.65}]}
+ const names=['C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B'];
+ const major=[0,2,4,5,7,9,11],minor=[0,2,3,5,7,8,10];
+ const scale=q.key?.endsWith('minor')?minor:major;
+ if(q.skill==='degrees'){const degree=Number(label.replace('♭','').split(' ')[0])-1;return [{notes:[q.events[0].notes[0]+12+scale[degree]],time:0,duration:.8,velocity:.65}]}
+ if(q.skill==='chords'){const quality:Record<string,number[]>={'Major':[0,4,7],'Minor':[0,3,7],'Diminished':[0,3,6],'Augmented':[0,4,8],'Sus4':[0,5,7],'Dominant 7':[0,4,7,10],'Major 7':[0,4,7,11],'Minor 7':[0,3,7,10]};const root=48+names.indexOf(q.detail.split(' ')[0]);return [{notes:quality[label].map(n=>root+n),time:0,duration:1.2,velocity:.6}]}
+ if(q.skill==='harmony'){const root=q.events[0].notes[0];const roman=q.key?.endsWith('minor')?['i','ii°','III','iv','V','VI','VII']:['I','ii','iii','IV','V','vi','vii°'];const d=roman.indexOf(label.replace(/7$/,''));if(d<0)return targetEvents(q);const notes=d===4?[root+7,root+11,root+14]:[root+scale[d],root+scale[(d+2)%7]+(d+2>=7?12:0),root+scale[(d+4)%7]+(d+4>=7?12:0)];if(label.endsWith('7'))notes.push(root+scale[(d+6)%7]+(d+6>=7?12:0));return [{notes,time:0,duration:1.1,velocity:.6}]}
+ return targetEvents(q);
+}

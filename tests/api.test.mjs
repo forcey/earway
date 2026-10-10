@@ -1,0 +1,12 @@
+import test from 'node:test';import assert from 'node:assert/strict';import ts from 'typescript';import fs from 'node:fs';
+const records=[];
+const fakeDb={
+ select(){return {from(){return {where(filter){return {orderBy(){return Promise.resolve(records.filter(r=>r.userId===filter).sort((a,b)=>a.at-b.at))}}}}}}},
+ insert(){return {values(rows){return {onConflictDoNothing(){for(const row of rows)if(!records.some(r=>r.id===row.id&&r.userId===row.userId))records.push(row);return Promise.resolve()}}}}}
+};
+let source=fs.readFileSync(new URL('../app/api/progress/route.ts',import.meta.url),'utf8');source=source.replace(/^import .*;$/gm,'');source=`const getChatGPTUser=()=>globalThis.__apiUser;const getDb=()=>globalThis.__apiDb;const progressEvents={userId:'user_id',at:'at'};const eq=(a,b)=>b;const asc=x=>x;const SKILLS=[{id:'pitch'}];\n`+source;
+const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+const api=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));globalThis.__apiDb=fakeDb;
+const request=(events,origin='https://earway.example')=>new Request('https://earway.example/api/progress',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify({events})});
+const event={id:'test',at:100,day:'2026-10-10',type:'answer',session:'s',skill:'pitch',level:1,target:'C',chosen:'C',correct:true,assisted:false,calibration:true,xp:10};
+test('API rejects anonymous and cross-origin writes, validates attempts, deduplicates retry, and isolates account history',async()=>{assert.equal((await api.GET()).status,401);assert.equal((await api.POST(request([event]))).status,401);globalThis.__apiUser={userId:'one'};assert.equal((await api.POST(request([event],'https://elsewhere.example'))).status,403);assert.equal((await api.POST(request([{...event,level:99}]))).status,400);assert.equal((await api.POST(request([event]))).status,200);assert.equal((await api.POST(request([event]))).status,200);assert.equal(records.length,1);let response=await api.GET();assert.equal((await response.json()).events.length,1);assert.equal(response.headers.get('Cache-Control'),'no-store');globalThis.__apiUser={userId:'two'};response=await api.GET();assert.equal((await response.json()).events.length,0);assert.equal((await api.POST(request([event]))).status,200);assert.equal(records.length,2)});

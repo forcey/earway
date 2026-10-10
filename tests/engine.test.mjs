@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {SKILLS,generate,stats,nextChallenge,calibrationLeft,NAMES,dayKey,streak} from '../app/engine.ts';
+function rng(seed){return()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296}}
+const intervalNames=['Unison','Minor 2nd','Major 2nd','Minor 3rd','Major 3rd','Perfect 4th','Tritone','Perfect 5th','Minor 6th','Major 6th','Minor 7th','Major 7th','Octave'];
+const qualities={'Major':[0,4,7],'Minor':[0,3,7],'Diminished':[0,3,6],'Augmented':[0,4,8],'Sus4':[0,5,7],'Dominant 7':[0,4,7,10],'Major 7':[0,4,7,11],'Minor 7':[0,3,7,10]};
+const event=(skill,level,correct,at,calibration=false,assisted=false)=>({id:String(at),at,day:dayKey(),type:'answer',session:'test',skill,level,target:'Major',chosen:correct?'Major':'Minor',correct,calibration,assisted,xp:10});
+test('3,500 exercises: valid choices, playable range, accurate pitch/interval/chord answers and target timing',()=>{
+ for(const s of SKILLS)for(let level=1;level<=5;level++)for(let seed=1;seed<=100;seed++){
+ const q=generate(s.id,level,rng(seed));assert(q.choices.includes(q.answer));assert.equal(new Set(q.choices).size,q.choices.length);assert(q.events.some(e=>e.target));assert(q.end>q.targetStart);
+ for(const e of q.events){assert(e.duration>0);assert(e.time>=0);for(const n of e.notes)assert(n>=36&&n<=96,`midi ${n}`)}
+ const targets=q.events.filter(e=>e.target);assert.equal(targets[0].time,q.targetStart);
+ if(s.id.startsWith('pitch'))assert.equal(NAMES[targets[0].notes[0]%12],q.answer);
+ if(s.id.includes('interval')){const notes=targets.flatMap(e=>e.notes);assert.equal(Math.abs(notes[1]-notes[0]),intervalNames.indexOf(q.answer))}
+ if(s.id==='chords'){const root=NAMES.indexOf(q.detail.split(' ')[0]);const actual=targets[0].notes.map(n=>(n-root+120)%12).sort((a,b)=>a-b);assert.deepEqual(actual,[...qualities[q.answer]].sort((a,b)=>a-b))}
+ if(s.id==='degrees'){const scale=q.key.endsWith('minor')?[0,2,3,5,7,8,10]:[0,2,4,5,7,9,11];const d=Number(q.answer.replace('♭','').split(' ')[0])-1;assert.equal((targets[0].notes[0]-q.events[0].notes[0])%12,scale[d])}
+ if(s.id==='harmony'){const minor=q.key.endsWith('minor');const scale=minor?[0,2,3,5,7,8,10]:[0,2,4,5,7,9,11];const romans=minor?['i','ii°','III','iv','V','VI','VII']:['I','ii','iii','IV','V','vi','vii°'];const d=romans.indexOf(q.answer.replace(/7$/,''));const root=q.events[0].notes[0];const expected=d===4?[7,11,14]:[scale[d],scale[(d+2)%7]+(d+2>=7?12:0),scale[(d+4)%7]+(d+4>=7?12:0)];if(level===5)expected.push(scale[(d+6)%7]+(d+6>=7?12:0));assert.deepEqual(targets[0].notes.map(n=>(n-root+120)%12).sort((a,b)=>a-b),expected.map(n=>n%12).sort((a,b)=>a-b))}
+ }
+});
+test('calibration samples every skill twice and responds to success',()=>{const events=[];const counts={};while(calibrationLeft(events)){const n=nextChallenge(events,[],undefined,rng(5));assert.equal(n.calibration,true);const count=counts[n.skill]||0;assert.equal(n.level,count===0?2:3);counts[n.skill]=count+1;events.push(event(n.skill,n.level,true,events.length+1,true))}assert.equal(events.length,14);for(const s of SKILLS)assert.equal(stats(events,s.id).level,3);assert.equal(nextChallenge(events).calibration,false)});
+test('skills advance separately; assistance never triggers advancement; failures ease difficulty',()=>{const base=[event('pitch',2,true,1,true),event('pitch',3,false,2,true)];assert.equal(stats(base,'pitch').level,2);const successes=Array.from({length:10},(_,i)=>event('pitch',2,i<8,i+3));assert.equal(stats([...base,...successes],'pitch').level,3);assert.equal(stats([...base,...successes],'chords').level,1);const assisted=Array.from({length:10},(_,i)=>event('pitch',2,true,i+3,false,true));assert(stats([...base,...assisted],'pitch').level<3);const misses=Array.from({length:8},(_,i)=>event('pitch',2,false,i+3));assert.equal(stats([...base,...misses],'pitch').level,1)});
+test('focus practice stays focused and due seventh-chord reviews preserve the requested target',()=>{const n=nextChallenge([],[],'harmony',rng(7));assert.equal(n.skill,'harmony');assert.equal(n.calibration,false);for(let seed=1;seed<30;seed++){const q=generate('harmony',5,rng(seed),'V7');assert.equal(q.answer,'V7')}});
+test('daily streak tolerates yesterday and does not inflate for multiple sessions',()=>{const today=dayKey();const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);assert.equal(streak([{type:'complete',day:today},{type:'complete',day:today},{type:'complete',day:dayKey(yesterday)}]),2);assert.equal(streak([{type:'complete',day:dayKey(yesterday)}]),1);assert.equal(streak([]),0)});
